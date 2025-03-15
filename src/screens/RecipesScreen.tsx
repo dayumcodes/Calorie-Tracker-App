@@ -13,9 +13,16 @@ import {
   useTheme
 } from 'react-native-paper';
 import * as SQLite from 'expo-sqlite';
+import { initDatabase } from '../database/database';
 
-// Open database connection
-const db = SQLite.openDatabaseSync('indiancalorietracker.db');
+// Import SQLiteDatabase type from database.ts
+interface SQLiteDatabase {
+  execAsync: (sql: string) => Promise<void>;
+  runAsync: (sql: string, ...params: any[]) => Promise<{ lastInsertRowId: number; changes: number }>;
+  getAllAsync: (sql: string, ...params: any[]) => Promise<any[]>;
+  getFirstAsync: (sql: string, ...params: any[]) => Promise<any>;
+  closeAsync: () => Promise<void>;
+}
 
 // Define recipe type
 interface Recipe {
@@ -28,24 +35,6 @@ interface Recipe {
   image_url?: string;
 }
 
-// Define SQLite types
-interface SQLiteTransaction {
-  executeSql: (
-    sqlStatement: string,
-    args?: any[],
-    success?: (tx: SQLiteTransaction, resultSet: SQLiteResultSet) => void,
-    error?: (tx: SQLiteTransaction, error: Error) => boolean
-  ) => void;
-}
-
-interface SQLiteResultSet {
-  rows: {
-    length: number;
-    item: (idx: number) => any;
-    _array: any[];
-  };
-}
-
 // Define navigation props
 interface NavigationProps {
   navigate: (screen: string, params?: any) => void;
@@ -56,11 +45,39 @@ const RecipesScreen = ({ navigation }: { navigation: NavigationProps }) => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredRecipes, setFilteredRecipes] = useState<Recipe[]>([]);
+  const [db, setDb] = useState<SQLiteDatabase | null>(null);
 
-  // Load recipes on component mount
+  // Initialize database on component mount
   useEffect(() => {
-    loadRecipes();
+    const setupDatabase = async () => {
+      try {
+        // Initialize the database if not already initialized
+        await initDatabase();
+        
+        // Open the database connection
+        const database = await SQLite.openDatabaseAsync('indiancalorietracker.db');
+        setDb(database);
+      } catch (error) {
+        console.error('Error setting up database:', error);
+      }
+    };
+    
+    setupDatabase();
+    
+    // Clean up function to close the database when component unmounts
+    return () => {
+      if (db) {
+        db.closeAsync();
+      }
+    };
   }, []);
+
+  // Load recipes when database is ready
+  useEffect(() => {
+    if (db) {
+      loadRecipes();
+    }
+  }, [db]);
 
   // Filter recipes when search query changes
   useEffect(() => {
@@ -74,26 +91,21 @@ const RecipesScreen = ({ navigation }: { navigation: NavigationProps }) => {
     }
   }, [searchQuery, recipes]);
 
-  // Load recipes from database
-  const loadRecipes = () => {
-    db.transaction((tx: SQLiteTransaction) => {
-      tx.executeSql(
-        'SELECT * FROM recipes ORDER BY name;',
-        [],
-        (_, { rows }) => {
-          setRecipes(rows._array);
-          setFilteredRecipes(rows._array);
-        },
-        (_, error) => {
-          console.error('Error loading recipes:', error);
-          return false;
-        }
-      );
-    });
+  // Load recipes from database using the new async API
+  const loadRecipes = async () => {
+    try {
+      if (!db) return;
+      
+      const result = await db.getAllAsync('SELECT * FROM recipes ORDER BY name;');
+      setRecipes(result);
+      setFilteredRecipes(result);
+    } catch (error) {
+      console.error('Error loading recipes:', error);
+    }
   };
 
-  // Delete recipe
-  const deleteRecipe = (recipeId: number) => {
+  // Delete recipe using the new async API
+  const deleteRecipe = async (recipeId: number) => {
     Alert.alert(
       'Delete Recipe',
       'Are you sure you want to delete this recipe?',
@@ -104,35 +116,32 @@ const RecipesScreen = ({ navigation }: { navigation: NavigationProps }) => {
         },
         {
           text: 'Delete',
-          onPress: () => {
-            db.transaction((tx: SQLiteTransaction) => {
-              // Delete recipe ingredients first
-              tx.executeSql(
-                'DELETE FROM recipe_ingredients WHERE recipe_id = ?;',
-                [recipeId],
-                (_, result) => {
-                  // Then delete the recipe
-                  tx.executeSql(
-                    'DELETE FROM recipes WHERE id = ?;',
-                    [recipeId],
-                    (_, result) => {
-                      loadRecipes(); // Reload recipes
-                      Alert.alert('Success', 'Recipe deleted successfully');
-                    },
-                    (_, error) => {
-                      console.error('Error deleting recipe:', error);
-                      return false;
-                    }
-                  );
-                },
-                (_, error) => {
-                  console.error('Error deleting recipe ingredients:', error);
-                  return false;
-                }
-              );
-            });
-          },
           style: 'destructive',
+          onPress: async () => {
+            try {
+              if (!db) return;
+              
+              // Delete recipe ingredients first
+              await db.runAsync(
+                'DELETE FROM recipe_ingredients WHERE recipe_id = ?;',
+                recipeId
+              );
+              
+              // Then delete the recipe
+              await db.runAsync(
+                'DELETE FROM recipes WHERE id = ?;',
+                recipeId
+              );
+              
+              // Refresh the recipes list
+              loadRecipes();
+              
+              Alert.alert('Success', 'Recipe deleted successfully');
+            } catch (error) {
+              console.error('Error deleting recipe:', error);
+              Alert.alert('Error', 'Failed to delete recipe');
+            }
+          },
         },
       ]
     );
@@ -250,9 +259,9 @@ const RecipesScreen = ({ navigation }: { navigation: NavigationProps }) => {
         </ScrollView>
       )}
 
-      {/* FAB for adding new recipe */}
+      {/* FAB for adding recipe */}
       <FAB
-        style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+        style={[styles.fab, { backgroundColor: "#00e6ac" }]}
         icon="plus"
         onPress={() => navigation.navigate('CreateRecipe')}
         label="Add Recipe"

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { Searchbar, Chip, Card, Title, Paragraph, Divider, useTheme, Text } from 'react-native-paper';
-import { getAllFoodItems, getFoodItemsByRegion } from '../database/database';
+import { Searchbar, Chip, Card, Title, Paragraph, Divider, useTheme, Text, FAB } from 'react-native-paper';
+import { getAllFoodItems } from '../database/database';
 
 // Define food item type
 interface FoodItem {
@@ -193,6 +193,14 @@ const FoodDatabaseScreen = ({ navigation }: { navigation: NavigationProps }) => 
           </View>
         }
       />
+
+      {/* FAB for adding food */}
+      <FAB
+        style={[styles.fab, { backgroundColor: "#00e6ac" }]}
+        icon="plus"
+        onPress={() => navigation.navigate('AddFood')}
+        label="Add Food"
+      />
     </View>
   );
 };
@@ -282,6 +290,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    margin: 16,
+    right: 0,
+    bottom: 0,
   },
 });
 

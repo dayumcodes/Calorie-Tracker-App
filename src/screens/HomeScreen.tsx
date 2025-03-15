@@ -1,7 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, Card, Button, ProgressBar, Divider, List, FAB, useTheme } from 'react-native-paper';
-import { getFoodLogsByDate } from '../database/database';
+import React, { useState, useEffect, useContext } from 'react';
+import { View, StyleSheet, ScrollView, Alert } from 'react-native';
+import { Text, Card, Button, ProgressBar, Divider, List, FAB, useTheme, IconButton } from 'react-native-paper';
+import { getFoodLogsByDate, addFoodLog } from '../database/database';
+import FoodCamera from '../components/FoodCamera';
+import { FoodData, saveFoodToLog } from '../services/FoodDetectionService';
+import { useNavigation } from '@react-navigation/native';
+import { ThemeContext } from '../../App';
 
 // Define food log type
 interface FoodLog {
@@ -25,11 +29,18 @@ interface ListIconProps {
   [key: string]: any;
 }
 
+// Define navigation props
+interface NavigationProps {
+  navigate: (screen: string, params?: any) => void;
+}
+
 // Temporary user ID until we implement authentication
 const TEMP_USER_ID = 1;
 
 const HomeScreen = () => {
   const theme = useTheme();
+  const { isDarkMode } = useContext(ThemeContext);
+  const navigation = useNavigation<NavigationProps>();
   const [date, setDate] = useState(new Date());
   const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
   const [dailySummary, setDailySummary] = useState({
@@ -42,6 +53,8 @@ const HomeScreen = () => {
     waterIntake: 0,
     waterGoal: 8 // Default 8 glasses
   });
+
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
 
   // Format date as YYYY-MM-DD
   const formattedDate = date.toISOString().split('T')[0];
@@ -126,16 +139,100 @@ const HomeScreen = () => {
     return acc;
   }, {} as Record<string, FoodLog[]>);
 
+  // Handle detected food from camera
+  const handleFoodDetected = async (foodDataItems: FoodData[]) => {
+    try {
+      // Get the current timestamp and format date
+      const timestamp = new Date().toISOString();
+      const defaultMealType = 'Lunch'; // Default meal type, could be made selectable
+      const quantity = 1; // Default quantity, could be made adjustable
+
+      // Process each detected food item
+      for (const foodData of foodDataItems) {
+        // Create a new food log entry
+        const newFoodLog = {
+          id: Date.now() + Math.random(), // Temporary ID with random to avoid duplicates
+          name: foodData.name,
+          calories: foodData.calories,
+          protein: foodData.protein,
+          carbs: foodData.carbs,
+          fat: foodData.fat,
+          fiber: foodData.fiber,
+          quantity: quantity,
+          meal_type: defaultMealType,
+          serving_size: foodData.serving_size,
+          log_id: Date.now() + Math.random() // Temporary log ID with random
+        };
+        
+        // Update UI immediately for better UX
+        setFoodLogs(prevLogs => [...prevLogs, newFoodLog]);
+      }
+      
+      // Calculate nutrition totals from all detected items
+      const totals = foodDataItems.reduce((acc, item) => {
+        return {
+          calories: acc.calories + item.calories,
+          protein: acc.protein + item.protein,
+          carbs: acc.carbs + item.carbs,
+          fat: acc.fat + item.fat,
+          fiber: acc.fiber + item.fiber
+        };
+      }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+      
+      // Update daily summary
+      setDailySummary(prev => ({
+        ...prev,
+        totalCalories: prev.totalCalories + totals.calories,
+        totalProtein: prev.totalProtein + totals.protein,
+        totalCarbs: prev.totalCarbs + totals.carbs,
+        totalFat: prev.totalFat + totals.fat,
+        totalFiber: prev.totalFiber + totals.fiber
+      }));
+      
+      // In a real app, you would save to database
+      // For each food item detected, call saveFoodToLog
+      for (const foodData of foodDataItems) {
+        await saveFoodToLog(TEMP_USER_ID, foodData, quantity, defaultMealType, formattedDate);
+      }
+      
+      // Show a success message
+      if (foodDataItems.length > 0) {
+        const itemNames = foodDataItems.map(item => item.name).join(', ');
+        const message = foodDataItems.length === 1 
+          ? `Added ${itemNames} to your food log` 
+          : `Added ${itemNames} to your food log`;
+        
+        Alert.alert('Success', message);
+      }
+    } catch (error) {
+      console.error('Error adding food from camera:', error);
+      Alert.alert('Error', 'Failed to add food to your log. Please try again.');
+    }
+  };
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <ScrollView>
         {/* Date Navigation */}
-        <View style={styles.dateNavigation}>
-          <Button onPress={goToPreviousDay} icon="chevron-left">
+        <View style={[styles.dateNavigation, { backgroundColor: theme.colors.surface }]}>
+          <Button 
+            onPress={goToPreviousDay} 
+            icon="chevron-left"
+            buttonColor="#00e6ac"
+            textColor="white"
+          >
             Previous
           </Button>
-          <Text style={styles.dateText}>{formatDateForDisplay(date)}</Text>
-          <Button onPress={goToNextDay} icon="chevron-right" contentStyle={{ flexDirection: 'row-reverse' }}>
+          <Text style={[styles.dateText, { color: theme.colors.onSurface }]}>
+            {formatDateForDisplay(date)}
+          </Text>
+          <Button 
+            onPress={goToNextDay} 
+            icon="chevron-right" 
+            contentStyle={{ flexDirection: 'row-reverse' }}
+            buttonColor="#00e6ac"
+            textColor="white"
+          >
             Next
           </Button>
         </View>
@@ -144,7 +241,7 @@ const HomeScreen = () => {
         <Card style={styles.card}>
           <Card.Title title="Daily Summary" />
           <Card.Content>
-            <Text style={styles.summaryText}>
+            <Text style={[styles.summaryText, { color: theme.colors.onSurface }]}>
               Calories: {dailySummary.totalCalories} / {dailySummary.calorieGoal} kcal
             </Text>
             <ProgressBar
@@ -197,6 +294,7 @@ const HomeScreen = () => {
               onPress={addWater}
               style={styles.waterButton}
               icon="water"
+              buttonColor="#00e6ac"
             >
               Add Water
             </Button>
@@ -231,10 +329,24 @@ const HomeScreen = () => {
 
       {/* FAB for adding food */}
       <FAB
-        style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+        style={[styles.fab, { backgroundColor: "#00e6ac" }]}
         icon="plus"
-        onPress={() => {}}
-        label="Add Food"
+        onPress={() => navigation.navigate('AddFood')}
+        label=""
+      />
+
+      {/* Camera Button at bottom center */}
+      <FAB
+        style={[styles.cameraFab, { backgroundColor: "#00e6ac" }]}
+        icon="camera"
+        onPress={() => setIsCameraOpen(true)}
+      />
+
+      {/* Food Camera Modal */}
+      <FoodCamera
+        visible={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onFoodDetected={handleFoodDetected}
       />
     </View>
   );
@@ -295,12 +407,12 @@ const styles = StyleSheet.create({
     width: 30,
     height: 40,
     borderWidth: 2,
-    borderColor: '#2196F3',
+    borderColor: '#00e6ac',
     borderRadius: 5,
     margin: 5,
   },
   waterGlassFilled: {
-    backgroundColor: '#2196F3',
+    backgroundColor: '#00e6ac',
   },
   waterText: {
     textAlign: 'center',
@@ -320,6 +432,19 @@ const styles = StyleSheet.create({
     margin: 16,
     right: 0,
     bottom: 0,
+  },
+  cameraFab: {
+    position: 'absolute',
+    bottom: 16,
+    alignSelf: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraButton: {
+    // Remove position absolute styles since it's now in the row
   },
 });
 

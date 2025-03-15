@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { View, StyleSheet, ScrollView, Alert, Image } from 'react-native';
 import { 
   Text, 
@@ -15,9 +15,17 @@ import {
 } from 'react-native-paper';
 import * as SQLite from 'expo-sqlite';
 import * as ImagePicker from 'expo-image-picker';
+import { initDatabase } from '../database/database';
+import { ThemeContext } from '../../App';
 
-// Open database connection
-const db = SQLite.openDatabaseSync('indiancalorietracker.db');
+// Define SQLiteDatabase type
+interface SQLiteDatabase {
+  execAsync: (sql: string) => Promise<void>;
+  runAsync: (sql: string, ...params: any[]) => Promise<{ lastInsertRowId: number; changes: number }>;
+  getAllAsync: (sql: string, ...params: any[]) => Promise<any[]>;
+  getFirstAsync: (sql: string, ...params: any[]) => Promise<any>;
+  closeAsync: () => Promise<void>;
+}
 
 // Define user profile interface
 interface UserProfile {
@@ -33,24 +41,6 @@ interface UserProfile {
   profile_image?: string;
 }
 
-// Define SQLite types
-interface SQLiteTransaction {
-  executeSql: (
-    sqlStatement: string,
-    args?: any[],
-    success?: (tx: SQLiteTransaction, resultSet: SQLiteResultSet) => void,
-    error?: (tx: SQLiteTransaction, error: Error) => boolean
-  ) => void;
-}
-
-interface SQLiteResultSet {
-  rows: {
-    length: number;
-    item: (idx: number) => any;
-    _array: any[];
-  };
-}
-
 // Define prop types
 interface IconProps {
   color?: string;
@@ -60,121 +50,165 @@ interface IconProps {
 
 const ProfileScreen = () => {
   const theme = useTheme();
-  const [profile, setProfile] = useState<UserProfile>({
-    id: 1,
-    name: '',
-    age: 0,
-    gender: 'Male',
-    height: 0,
-    weight: 0,
-    activity_level: 'Moderate',
-    goal: 'Maintain',
-    daily_calorie_target: 2000,
-    profile_image: undefined
-  });
-  
+  const { isDarkMode, toggleTheme } = useContext(ThemeContext);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [editMode, setEditMode] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [name, setName] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [activityLevel, setActivityLevel] = useState('');
+  const [goal, setGoal] = useState('');
+  const [calorieTarget, setCalorieTarget] = useState('');
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [db, setDb] = useState<SQLiteDatabase | null>(null);
 
-  // Load user profile on component mount
+  // Initialize database on component mount
   useEffect(() => {
-    loadUserProfile();
+    const setupDatabase = async () => {
+      try {
+        // Initialize the database if not already initialized
+        await initDatabase();
+        
+        // Open the database connection
+        const database = await SQLite.openDatabaseAsync('indiancalorietracker.db');
+        setDb(database);
+      } catch (error) {
+        console.error('Error setting up database:', error);
+      }
+    };
+    
+    setupDatabase();
+    
+    // Clean up function to close the database when component unmounts
+    return () => {
+      if (db) {
+        db.closeAsync();
+      }
+    };
   }, []);
 
+  // Load user profile when database is ready
+  useEffect(() => {
+    if (db) {
+      loadUserProfile();
+    }
+  }, [db]);
+
   // Load user profile from database
-  const loadUserProfile = () => {
-    db.transaction((tx: SQLiteTransaction) => {
-      tx.executeSql(
-        'SELECT * FROM users WHERE id = 1;',
-        [],
-        (_, { rows }) => {
-          if (rows.length > 0) {
-            setProfile(rows.item(0));
-          } else {
-            // Create default profile if none exists
-            createDefaultProfile();
-          }
-        },
-        (_, error) => {
-          console.error('Error loading user profile:', error);
-          return false;
-        }
-      );
-    });
+  const loadUserProfile = async () => {
+    try {
+      if (!db) return;
+      
+      const result = await db.getAllAsync('SELECT * FROM users LIMIT 1');
+      
+      if (result.length > 0) {
+        const userProfile = result[0];
+        setProfile(userProfile);
+        setName(userProfile.name || '');
+        setAge(userProfile.age ? userProfile.age.toString() : '');
+        setGender(userProfile.gender || '');
+        setHeight(userProfile.height ? userProfile.height.toString() : '');
+        setWeight(userProfile.weight ? userProfile.weight.toString() : '');
+        setActivityLevel(userProfile.activity_level || '');
+        setGoal(userProfile.goal || '');
+        setCalorieTarget(userProfile.daily_calorie_target ? userProfile.daily_calorie_target.toString() : '');
+        setProfileImage(userProfile.profile_image || null);
+      } else {
+        // No profile exists, create a default one
+        createDefaultProfile();
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+      Alert.alert('Error', 'Failed to load user profile');
+    }
   };
 
   // Create default profile
-  const createDefaultProfile = () => {
-    const defaultProfile: UserProfile = {
-      id: 1,
-      name: 'User',
-      age: 30,
-      gender: 'Male',
-      height: 170,
-      weight: 70,
-      activity_level: 'Moderate',
-      goal: 'Maintain',
-      daily_calorie_target: 2000,
-      profile_image: undefined
-    };
-
-    db.transaction((tx: SQLiteTransaction) => {
-      tx.executeSql(
-        'INSERT INTO users (id, name, age, gender, height, weight, activity_level, goal, daily_calorie_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);',
-        [
-          defaultProfile.id,
-          defaultProfile.name,
-          defaultProfile.age,
-          defaultProfile.gender,
-          defaultProfile.height,
-          defaultProfile.weight,
-          defaultProfile.activity_level,
-          defaultProfile.goal,
-          defaultProfile.daily_calorie_target
-        ],
-        (_, result) => {
-          setProfile(defaultProfile);
-        },
-        (_, error) => {
-          console.error('Error creating default profile:', error);
-          return false;
-        }
+  const createDefaultProfile = async () => {
+    try {
+      if (!db) return;
+      
+      const defaultProfile = {
+        name: 'User',
+        age: 30,
+        gender: 'Male',
+        height: 170,
+        weight: 70,
+        activity_level: 'Moderate',
+        goal: 'Maintain',
+        daily_calorie_target: 2000
+      };
+      
+      const result = await db.runAsync(
+        'INSERT INTO users (name, age, gender, height, weight, activity_level, goal, daily_calorie_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        defaultProfile.name,
+        defaultProfile.age,
+        defaultProfile.gender,
+        defaultProfile.height,
+        defaultProfile.weight,
+        defaultProfile.activity_level,
+        defaultProfile.goal,
+        defaultProfile.daily_calorie_target
       );
-    });
+      
+      if (result.lastInsertRowId) {
+        // Load the newly created profile
+        loadUserProfile();
+      }
+    } catch (error) {
+      console.error('Error creating default profile:', error);
+      Alert.alert('Error', 'Failed to create default profile');
+    }
   };
 
   // Save profile changes
-  const saveProfile = () => {
-    db.transaction((tx: SQLiteTransaction) => {
-      tx.executeSql(
-        'UPDATE users SET name = ?, age = ?, gender = ?, height = ?, weight = ?, activity_level = ?, goal = ?, daily_calorie_target = ?, profile_image = ? WHERE id = 1;',
-        [
-          profile.name,
-          profile.age,
-          profile.gender,
-          profile.height,
-          profile.weight,
-          profile.activity_level,
-          profile.goal,
-          profile.daily_calorie_target,
-          profile.profile_image
-        ],
-        (_, result) => {
-          setEditMode(false);
-          Alert.alert('Success', 'Profile updated successfully');
-        },
-        (_, error) => {
-          console.error('Error updating profile:', error);
-          return false;
-        }
+  const saveProfile = async () => {
+    try {
+      if (!db || !profile) return;
+      
+      const updatedProfile = {
+        name: name,
+        age: parseInt(age) || 0,
+        gender: gender,
+        height: parseInt(height) || 0,
+        weight: parseInt(weight) || 0,
+        activity_level: activityLevel,
+        goal: goal,
+        daily_calorie_target: parseInt(calorieTarget) || 0,
+        profile_image: profileImage
+      };
+      
+      await db.runAsync(
+        'UPDATE users SET name = ?, age = ?, gender = ?, height = ?, weight = ?, activity_level = ?, goal = ?, daily_calorie_target = ?, profile_image = ? WHERE id = ?',
+        updatedProfile.name,
+        updatedProfile.age,
+        updatedProfile.gender,
+        updatedProfile.height,
+        updatedProfile.weight,
+        updatedProfile.activity_level,
+        updatedProfile.goal,
+        updatedProfile.daily_calorie_target,
+        updatedProfile.profile_image,
+        profile.id
       );
-    });
+      
+      // Reload profile
+      loadUserProfile();
+      setEditMode(false);
+      
+      Alert.alert('Success', 'Profile updated successfully');
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      Alert.alert('Error', 'Failed to save profile changes');
+    }
   };
 
   // Calculate BMI
   const calculateBMI = (): number => {
-    if (profile.height <= 0 || profile.weight <= 0) return 0;
+    if (!profile || profile.height <= 0 || profile.weight <= 0) return 0;
     const heightInMeters = profile.height / 100;
     return parseFloat((profile.weight / (heightInMeters * heightInMeters)).toFixed(1));
   };
@@ -205,16 +239,25 @@ const ProfileScreen = () => {
     });
 
     if (!result.canceled) {
-      setProfile({
-        ...profile,
-        profile_image: result.assets[0].uri
-      });
+      setProfileImage(result.assets[0].uri);
     }
   };
 
-  // Calculate daily calorie needs based on profile
-  const calculateCalorieNeeds = () => {
-    // Harris-Benedict Equation
+  // Update calorie target
+  const updateCalorieTarget = () => {
+    if (!profile) return;
+    
+    const newTarget = calculateCalorieNeeds();
+    if (newTarget) {
+      saveProfile();
+    }
+  };
+
+  // Calculate calorie needs
+  const calculateCalorieNeeds = (): number => {
+    if (!profile) return 0;
+    
+    // Calculate BMR using Mifflin-St Jeor Equation
     let bmr = 0;
     
     if (profile.gender === 'Male') {
@@ -232,24 +275,20 @@ const ProfileScreen = () => {
       case 'Very Active': activityMultiplier = 1.9; break;
     }
     
-    let tdee = bmr * activityMultiplier;
+    // Calculate TDEE (Total Daily Energy Expenditure)
+    let tdee = Math.round(bmr * activityMultiplier);
     
     // Goal adjustment
     switch (profile.goal) {
       case 'Lose Weight': tdee -= 500; break;
       case 'Gain Weight': tdee += 500; break;
+      // Maintain weight - no adjustment needed
     }
     
-    return Math.round(tdee);
-  };
-
-  // Update calorie target
-  const updateCalorieTarget = () => {
-    const calculatedTarget = calculateCalorieNeeds();
-    setProfile({
-      ...profile,
-      daily_calorie_target: calculatedTarget
-    });
+    // Update the state
+    setCalorieTarget(tdee.toString());
+    
+    return tdee;
   };
 
   return (
@@ -257,7 +296,7 @@ const ProfileScreen = () => {
       {/* Profile Header */}
       <Card style={styles.profileCard}>
         <Card.Content style={styles.profileHeader}>
-          {profile.profile_image ? (
+          {profile?.profile_image ? (
             <Avatar.Image 
               size={100} 
               source={{ uri: profile.profile_image }} 
@@ -275,20 +314,20 @@ const ProfileScreen = () => {
             <View style={styles.profileEditHeader}>
               <TextInput
                 label="Name"
-                value={profile.name}
-                onChangeText={(text: string) => setProfile({...profile, name: text})}
+                value={name}
+                onChangeText={(text: string) => setName(text)}
                 style={styles.input}
               />
-              <Button mode="contained" onPress={pickImage} style={styles.imageButton}>
+              <Button mode="contained" onPress={pickImage} style={styles.imageButton} buttonColor="#00e6ac">
                 Change Photo
               </Button>
             </View>
           ) : (
             <View style={styles.profileInfo}>
-              <Title style={styles.profileName}>{profile.name}</Title>
-              <Paragraph style={styles.profileGoal}>Goal: {profile.goal}</Paragraph>
+              <Title style={styles.profileName}>{profile?.name}</Title>
+              <Paragraph style={styles.profileGoal}>Goal: {profile?.goal}</Paragraph>
               <Paragraph style={styles.profileTarget}>
-                Daily Target: {profile.daily_calorie_target} kcal
+                Daily Target: {profile?.daily_calorie_target} kcal
               </Paragraph>
             </View>
           )}
@@ -297,11 +336,11 @@ const ProfileScreen = () => {
         <Card.Actions style={styles.cardActions}>
           {editMode ? (
             <>
-              <Button onPress={() => setEditMode(false)}>Cancel</Button>
-              <Button mode="contained" onPress={saveProfile}>Save</Button>
+              <Button onPress={() => setEditMode(false)} textColor="#00e6ac">Cancel</Button>
+              <Button mode="contained" onPress={saveProfile} buttonColor="#00e6ac">Save</Button>
             </>
           ) : (
-            <Button mode="contained" onPress={() => setEditMode(true)}>
+            <Button mode="contained" onPress={() => setEditMode(true)} buttonColor="#00e6ac">
               Edit Profile
             </Button>
           )}
@@ -318,15 +357,15 @@ const ProfileScreen = () => {
               <View style={styles.row}>
                 <TextInput
                   label="Age"
-                  value={profile.age.toString()}
-                  onChangeText={(text: string) => setProfile({...profile, age: parseInt(text) || 0})}
+                  value={age}
+                  onChangeText={(text: string) => setAge(text)}
                   keyboardType="numeric"
                   style={[styles.input, styles.halfInput]}
                 />
                 <TextInput
                   label="Gender"
-                  value={profile.gender}
-                  onChangeText={(text: string) => setProfile({...profile, gender: text})}
+                  value={gender}
+                  onChangeText={(text: string) => setGender(text)}
                   style={[styles.input, styles.halfInput]}
                 />
               </View>
@@ -334,15 +373,15 @@ const ProfileScreen = () => {
               <View style={styles.row}>
                 <TextInput
                   label="Height (cm)"
-                  value={profile.height.toString()}
-                  onChangeText={(text: string) => setProfile({...profile, height: parseInt(text) || 0})}
+                  value={height}
+                  onChangeText={(text: string) => setHeight(text)}
                   keyboardType="numeric"
                   style={[styles.input, styles.halfInput]}
                 />
                 <TextInput
                   label="Weight (kg)"
-                  value={profile.weight.toString()}
-                  onChangeText={(text: string) => setProfile({...profile, weight: parseInt(text) || 0})}
+                  value={weight}
+                  onChangeText={(text: string) => setWeight(text)}
                   keyboardType="numeric"
                   style={[styles.input, styles.halfInput]}
                 />
@@ -350,23 +389,23 @@ const ProfileScreen = () => {
               
               <TextInput
                 label="Activity Level"
-                value={profile.activity_level}
-                onChangeText={(text: string) => setProfile({...profile, activity_level: text})}
+                value={activityLevel}
+                onChangeText={(text: string) => setActivityLevel(text)}
                 style={styles.input}
               />
               
               <TextInput
                 label="Goal"
-                value={profile.goal}
-                onChangeText={(text: string) => setProfile({...profile, goal: text})}
+                value={goal}
+                onChangeText={(text: string) => setGoal(text)}
                 style={styles.input}
               />
               
               <View style={styles.row}>
                 <TextInput
                   label="Daily Calorie Target"
-                  value={profile.daily_calorie_target.toString()}
-                  onChangeText={(text: string) => setProfile({...profile, daily_calorie_target: parseInt(text) || 0})}
+                  value={calorieTarget}
+                  onChangeText={(text: string) => setCalorieTarget(text)}
                   keyboardType="numeric"
                   style={[styles.input, { flex: 2 }]}
                 />
@@ -374,6 +413,7 @@ const ProfileScreen = () => {
                   mode="contained" 
                   onPress={updateCalorieTarget}
                   style={[styles.calculateButton, { flex: 1 }]}
+                  buttonColor="#00e6ac"
                 >
                   Calculate
                 </Button>
@@ -384,22 +424,22 @@ const ProfileScreen = () => {
               <View style={styles.metricRow}>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Age</Text>
-                  <Text style={styles.metricValue}>{profile.age} years</Text>
+                  <Text style={styles.metricValue}>{profile?.age} years</Text>
                 </View>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Gender</Text>
-                  <Text style={styles.metricValue}>{profile.gender}</Text>
+                  <Text style={styles.metricValue}>{profile?.gender}</Text>
                 </View>
               </View>
               
               <View style={styles.metricRow}>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Height</Text>
-                  <Text style={styles.metricValue}>{profile.height} cm</Text>
+                  <Text style={styles.metricValue}>{profile?.height} cm</Text>
                 </View>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Weight</Text>
-                  <Text style={styles.metricValue}>{profile.weight} kg</Text>
+                  <Text style={styles.metricValue}>{profile?.weight} kg</Text>
                 </View>
               </View>
               
@@ -417,11 +457,11 @@ const ProfileScreen = () => {
               <View style={styles.metricRow}>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Activity Level</Text>
-                  <Text style={styles.metricValue}>{profile.activity_level}</Text>
+                  <Text style={styles.metricValue}>{profile?.activity_level}</Text>
                 </View>
                 <View style={styles.metric}>
                   <Text style={styles.metricLabel}>Goal</Text>
-                  <Text style={styles.metricValue}>{profile.goal}</Text>
+                  <Text style={styles.metricValue}>{profile?.goal}</Text>
                 </View>
               </View>
             </View>
@@ -436,24 +476,24 @@ const ProfileScreen = () => {
           
           <List.Item
             title="Dark Mode"
-            left={(props: IconProps) => <List.Icon {...props} icon="theme-light-dark" />}
-            right={(props: IconProps) => <Switch value={darkMode} onValueChange={setDarkMode} />}
+            left={(props: IconProps) => <List.Icon {...props} icon="theme-light-dark" color="#00e6ac" />}
+            right={(props: IconProps) => <Switch value={isDarkMode} onValueChange={toggleTheme} color="#00e6ac" />}
           />
           
           <Divider />
           
           <List.Item
             title="Notifications"
-            left={(props: IconProps) => <List.Icon {...props} icon="bell" />}
-            right={(props: IconProps) => <Switch value={notificationsEnabled} onValueChange={setNotificationsEnabled} />}
+            left={(props: IconProps) => <List.Icon {...props} icon="bell" color="#00e6ac" />}
+            right={(props: IconProps) => <Switch value={notificationsEnabled} onValueChange={setNotificationsEnabled} color="#00e6ac" />}
           />
           
           <Divider />
           
           <List.Item
             title="Export Data"
-            left={(props: IconProps) => <List.Icon {...props} icon="export" />}
-            right={(props: IconProps) => <List.Icon {...props} icon="chevron-right" />}
+            left={(props: IconProps) => <List.Icon {...props} icon="export" color="#00e6ac" />}
+            right={(props: IconProps) => <List.Icon {...props} icon="chevron-right" color="#00e6ac" />}
             onPress={() => Alert.alert('Export', 'Data export feature coming soon!')}
           />
           
@@ -461,8 +501,8 @@ const ProfileScreen = () => {
           
           <List.Item
             title="About"
-            left={(props: IconProps) => <List.Icon {...props} icon="information" />}
-            right={(props: IconProps) => <List.Icon {...props} icon="chevron-right" />}
+            left={(props: IconProps) => <List.Icon {...props} icon="information" color="#00e6ac" />}
+            right={(props: IconProps) => <List.Icon {...props} icon="chevron-right" color="#00e6ac" />}
             onPress={() => Alert.alert('About', 'Indian Calorie Tracker v1.0\nTrack your nutrition with focus on Indian cuisine.')}
           />
         </Card.Content>

@@ -383,4 +383,40 @@ export const deleteRecipe = async (recipeId: number) => {
     console.error('Error deleting recipe:', error);
     return false;
   }
+};
+
+// Add food item to database
+export const addFoodItem = async (
+  name: string,
+  calories: number,
+  protein: number,
+  carbs: number,
+  fat: number,
+  fiber: number,
+  region: string,
+  category: string,
+  serving_size: string,
+  image_url?: string
+): Promise<number> => {
+  try {
+    const result = await db.runAsync(
+      'INSERT INTO food_items (name, calories, protein, carbs, fat, fiber, region, category, serving_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      name, calories, protein, carbs, fat, fiber, region, category, serving_size
+    );
+    return result.lastInsertRowId;
+  } catch (error) {
+    console.error('Error adding food item:', error);
+    return -1;
+  }
+};
+
+// Log food consumption
+export const logFood = async (
+  userId: number,
+  foodId: number,
+  date: string,
+  mealType: string,
+  quantity: number
+): Promise<void> => {
+  await addFoodLog(userId, foodId, quantity, mealType, date);
 }; 
